@@ -8,7 +8,23 @@
 - `.gitignore`: `.env`, `.env.*` (кроме `.env.example`), `*.db`, `.venv`, Excel, `data/market_cache/*`.
 - Добавлены `LICENSE` (MIT), `SECURITY.md`.
 
-## Команды (PowerShell, каталог проекта)
+## Локальный репозиторий уже создан
+
+В каталоге проекта есть `.git` и ветка `main` с начальным коммитом (без `.env`, без `*.xlsx`).
+
+Чтобы **одним шагом** создать репозиторий на GitHub и выполнить `push` (нужен [PAT](https://github.com/settings/tokens) с правом **repo**):
+
+```powershell
+cd $HOME\Desktop\polymarket-agent
+$env:GITHUB_TOKEN = "ghp_ВАШ_ТОКЕН"
+.\scripts\push_to_github.ps1 -RepoName polymarket-agent
+```
+
+После успешного push можно сбросить URL remote на обычный (без токена в строке), см. сообщение скрипта.
+
+---
+
+## Команды вручную (PowerShell, каталог проекта)
 
 ```powershell
 cd $HOME\Desktop\polymarket-agent
