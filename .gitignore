@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+*.db
+__pycache__/
+.venv/
+*.pyc
+.idea/
+.vscode/
+logs/
+
+# Личные данные и локальный кэш для refresh.py
+*.xlsx
+polymarket_рекомендации.xlsx
+data/market_cache/*
+!data/market_cache/.gitkeep

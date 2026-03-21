@@ -1,0 +1,20 @@
+py-clob-client
+aiohttp
+aiosqlite
+pydantic
+pydantic-settings
+rich
+python-dotenv
+tenacity
+openpyxl
+
+# Historical backtest (fix-historical-backtest-module)
+matplotlib>=3.5
+pandas>=1.3
+
+# Web dashboard
+streamlit>=1.28
+
+# REST API (/stats, /signals) — опционально для task-mcp-server
+fastapi>=0.115
+uvicorn[standard]>=0.30

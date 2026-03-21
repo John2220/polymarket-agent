@@ -1,0 +1,27 @@
+---
+description: P&L и обновление ставок в Excel — Polymarket
+alwaysApply: true
+globs: refresh.py, update_forecasts.py, check_and_update.py, update_results.py
+---
+
+# P&L для Polymarket (Excel, разрешённые ставки)
+
+## Формула P&L
+- **Выигрыш:** `pnl = bet * (1/price - 1)`
+- **Проигрыш:** `pnl = -bet`
+- **`price`** = цена **купленной** доли (колонка 7). Для YES — yes_price, для NO — no_price.
+- Одинаковая формула для YES и NO. **НЕ** использовать для NO: `1/(1-price)` или `no_price = 1 - price`.
+
+## Определение выигрыша
+- YES: `won = (outcome == "Yes")`
+- NO: `won = (outcome == "No")`
+- Всегда проверять колонку 4 (Направление) перед расчётом P&L.
+
+## MANUAL_RESULTS (refresh.py)
+- Ключ = точный текст вопроса (колонка 3)
+- outcome: "Yes" | "No" | None (None = пропуск)
+- Проверка: `if manual and manual.get("outcome")` — пропускать при outcome=None
+
+## Ссылки
+- Полный аудит: `FORMULAS_AUDIT.md`
+- Правила для агентов: `.cursor/AGENT_RULES.md`

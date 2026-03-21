@@ -1,0 +1,13 @@
+---
+description: Стиль кода и обязательное логирование каждой ставки
+globs: "**/*.py"
+alwaysApply: false
+---
+
+# Python стиль
+
+- Типизация: все функции с type hints (аргументы + return)
+- async def для всех I/O функций (API, БД)
+- Логирование через `logging` + `rich.logging.RichHandler`, не print()
+- Обработка ошибок: ловить конкретные исключения, не голый `except Exception`
+- Каждое решение о ставке (принято/отклонено) логировать с полным контекстом: market_id, side, p_true, price, edge, kelly_f, причина отклонения

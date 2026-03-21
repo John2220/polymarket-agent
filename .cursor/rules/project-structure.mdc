@@ -1,0 +1,20 @@
+---
+description: Карта модулей и порядок обработки ставки от сигнала до исполнения
+alwaysApply: true
+---
+
+# Структура проекта и пайплайн ставки
+
+Порядок обработки (data flow):
+1. `data/collector.py` -- получить цены YES и NO из ордербука Polymarket (Gamma + CLOB API)
+2. `data/odds_api.py` -- получить линии Pinnacle, сделать devig -> p_true
+3. `analysis/signals.py` -- сравнить p_true с ценами PM, отфильтровать по edge >= MIN_EDGE и ликвидности
+4. `analysis/kelly.py` -- рассчитать размер ставки (fractional Kelly)
+5. `trading/risk.py` -- проверить лимиты (max_bet, daily_loss, bankroll)
+6. `trading/executor.py` -- recommend (показать) или auto (FOK ордер)
+7. `storage/db.py` -- записать результат в SQLite
+8. `analysis/backtest.py` -- записать snapshot для forward-test
+
+- `config.py` -- загрузка .env, валидация ключей
+- `main.py` -- CLI точка входа (recommend / auto / stats)
+- `data/models.py` -- Pydantic модели: Market, Event, OrderBook, OddsLine

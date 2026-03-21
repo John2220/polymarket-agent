@@ -1,0 +1,13 @@
+---
+description: Общие стандарты кодирования Polymarket Agent
+alwaysApply: true
+---
+
+# Polymarket Agent -- стандарты
+
+- Язык проекта: Python 3.11+, весь async-код через asyncio
+- py-clob-client -- синхронная библиотека; все её вызовы оборачивать в `asyncio.to_thread()`
+- HTTP-запросы делать через `aiohttp`, не `requests`
+- Retry логика -- только через декоратор `@tenacity.retry`, не писать свою
+- Все модели данных -- Pydantic v2 (BaseModel), не dataclass и не dict
+- Все денежные суммы хранить как Decimal, не float (избежать ошибок округления при расчёте ставок)

@@ -1,0 +1,12 @@
+---
+description: Безопасность ключей и защита банкролла
+alwaysApply: true
+---
+
+# Безопасность
+
+- НИКОГДА не хардкодить API ключи и приватные ключи в коде
+- Все секреты загружать из .env через python-dotenv / pydantic-settings
+- .env, *.db, __pycache__/, .venv/ ВСЕГДА должны быть в .gitignore
+- POLYMARKET_PRIVATE_KEY нужен ТОЛЬКО для --mode auto, не требовать его в recommend/stats
+- Банкролл-защита: остановить auto mode если bankroll упал ниже MIN_BANKROLL или daily_loss достигнут
