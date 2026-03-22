@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     max_bet_usd: float = 50.0
     max_slippage: float = 0.02
     daily_loss_limit: float = 50.0  # 5% от $1000 — активирован по плану доработок
+    max_daily_wager_pct: float = 0.30  # Макс. доля банкролла в обороте за сутки (только auto)
     max_consecutive_losses: int = 3  # После 3 проигрышей подряд — пауза 24ч
     max_drawdown_pct: float = 25.0  # Пауза ставок при просадке от пика (BACKTEST 2025)
     drawdown_alert_pct: float = 15.0  # Алерт в лог при просадке

@@ -12,9 +12,14 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 
 from dotenv import load_dotenv
 from openpyxl import load_workbook
+from openpyxl.styles import Border, Font, PatternFill
 from core.bet_results import calc_pnl
+from core.excel_utils import (
+    BLUE_FILL, CENTER, excel_header, GRAY_FILL, GREEN_FILL, ORANGE_FILL,
+    RED_FILL, THIN_BORDER, WRAP, YELLOW_FILL, ZEBRA_FILL,
+    categorize_market,
+)
 from core.gamma_resolve import is_no_side, is_yes_side
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 _REPO_ROOT = Path(__file__).resolve().parent
 load_dotenv(_REPO_ROOT / ".env")
@@ -49,29 +54,6 @@ def _market_cache_files() -> list[str]:
 EXCEL_PATH = _excel_path()
 ACTIVE_FILES = _market_cache_files()
 NOW = datetime.now(timezone.utc)
-
-# ── Стили ────────────────────────────────────────────────────
-HEADER_FONT  = Font(bold=True, color="FFFFFF", size=11)
-HEADER_FILL  = PatternFill(start_color="2F5496", end_color="2F5496", fill_type="solid")
-GREEN_FILL   = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-RED_FILL     = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-YELLOW_FILL  = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
-ORANGE_FILL  = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
-BLUE_FILL    = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid")
-GRAY_FILL    = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-ZEBRA_FILL   = PatternFill(start_color="F5F5F5", end_color="F5F5F5", fill_type="solid")
-CENTER       = Alignment(horizontal="center", vertical="center")
-WRAP         = Alignment(wrap_text=True, vertical="top")
-THIN_BORDER  = Border(
-    left=Side(style="thin"), right=Side(style="thin"),
-    top=Side(style="thin"),  bottom=Side(style="thin"),
-)
-
-def hdr(ws, row, cols):
-    for c in range(1, cols + 1):
-        cell = ws.cell(row=row, column=c)
-        cell.font = HEADER_FONT; cell.fill = HEADER_FILL
-        cell.alignment = CENTER; cell.border = THIN_BORDER
 
 # ════════════════════════════════════════════════════════════
 # 1. ЗАГРУЗКА АКТИВНЫХ РЫНКОВ
@@ -343,22 +325,6 @@ ws_stats.cell(row=log_row, column=1).fill = GREEN_FILL if total_pnl >= 0 else RE
 # ════════════════════════════════════════════════════════════
 # 4. ОБНОВЛЯЕМ РЕКОМЕНДАЦИИ
 # ════════════════════════════════════════════════════════════
-SPORT_KW = [
-    "win","beat"," vs ","o/u","over","under","total","nba","nhl","nfl","ufc",
-    "fc "," fc","afc","tolima","tijuana","puebla","tigres","mazatlan",
-    "auxerre","strasbourg","lens","metz","gracheva","tagger","tennis",
-    "hurricanes","burnley","arsenal","chelsea","liverpool","tottenham",
-    "manchester","villa","lakers","celtics","warriors","nuggets","bucks",
-    "fight","bout","match","toulouse","marseille","monaco","psg","lyon",
-]
-def categorize(q):
-    ql = q.lower()
-    if any(w in ql for w in SPORT_KW): return "Спорт"
-    if any(w in ql for w in ["bitcoin","ethereum","btc","eth","solana","doge","crypto"]): return "Крипто"
-    if any(w in ql for w in ["president","election","congress","senate","democrat","republican","tariff"]): return "Политика"
-    if any(w in ql for w in ["war","sanction","iran","russia","china","ukraine","missile"]): return "Геополитика"
-    return "Другое"
-
 def rec_for(cat, liq):
     if cat == "Спорт" and liq >= 10_000: return "АНАЛИЗИРОВАТЬ", GREEN_FILL
     if cat == "Спорт" and liq >= 2_000:  return "ОСТОРОЖНО",     YELLOW_FILL
@@ -394,7 +360,7 @@ for m in all_active:
         try: end_dt = datetime.fromisoformat(end_raw.replace("Z","+00:00"))
         except: pass
     if end_dt and end_dt < NOW: continue
-    cat = categorize(q)
+    cat = categorize_market(q)
     rec, rfill = rec_for(cat, liq)
     chk = (end_dt + timedelta(hours=2)) if end_dt else None
     new_recs.append({
@@ -415,7 +381,7 @@ for r in range(2, 62):
         ws_rec.cell(row=r, column=c).border = Border()
 for c, h in enumerate(HEADERS, 1):
     ws_rec.cell(row=1, column=c, value=h)
-hdr(ws_rec, 1, len(HEADERS))
+excel_header(ws_rec, 1, len(HEADERS))
 ws_rec.row_dimensions[1].height = 30
 
 for i, m in enumerate(display, 1):

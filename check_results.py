@@ -44,10 +44,13 @@ async def _fetch_resolved_markets_bulk(collector: PolymarketCollector, total_lim
     return all_markets[:total_limit]
 
 
-async def resolve_bets(db: Database):
-    """Обновить результаты snapshots и bets из Gamma API (закрытые рынки)."""
-    settings = Settings()
-    collector = PolymarketCollector(settings)
+async def resolve_bets(db: Database, collector: "PolymarketCollector | None" = None):
+    """Обновить результаты snapshots и bets из Gamma API (закрытые рынки).
+    collector: опционально — если передан, используется без закрытия (caller владеет).
+    """
+    own_collector = collector is None
+    if own_collector:
+        collector = PolymarketCollector(Settings())
 
     try:
         console.print("[dim]Загрузка закрытых рынков с Polymarket...[/dim]")
@@ -113,7 +116,8 @@ async def resolve_bets(db: Database):
             console.print("[dim]Нет совпадений с закрытыми рынками.[/dim]")
 
     finally:
-        await collector.close()
+        if own_collector:
+            await collector.close()
 
     # 3. Показать обновлённую статистику
     snap_stats = await db.get_snapshot_stats()

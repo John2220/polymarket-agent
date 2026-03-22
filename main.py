@@ -26,8 +26,8 @@ from analysis.backtest import (
     show_betting_stats,
     show_signal_calibration,
     show_stats_by_league,
-    resolve_pending_snapshots,
 )
+from check_results import resolve_bets
 from storage.db import Database
 from trading.risk import RiskManager
 from trading.executor import Executor
@@ -227,20 +227,12 @@ async def run_scan_cycle(
 
 
 async def run_stats(db: Database, resolve: bool = True):
-    """Отобразить статистику. При resolve=True — обновить pending snapshots из Gamma API."""
+    """Отобразить статистику. При resolve=True — обновить pending snapshots и bets из Gamma API."""
     if resolve:
-        from config import Settings
-        from data.collector import PolymarketCollector
-        settings = Settings()
-        collector = PolymarketCollector(settings)
         try:
-            n = await resolve_pending_snapshots(db, collector)
-            if n > 0:
-                console.print(f"[dim]Обновлено {n} snapshot(ов) из закрытых рынков[/dim]")
+            await resolve_bets(db)
         except Exception as exc:
-            console.print(f"[yellow]Не удалось обновить snapshots: {exc}[/yellow]")
-        finally:
-            await collector.close()
+            console.print(f"[yellow]Не удалось обновить snapshots/bets: {exc}[/yellow]")
 
     await show_forward_test_stats(db)
     await show_stats_by_league(db)

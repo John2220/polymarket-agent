@@ -27,7 +27,7 @@ async def main():
     from config import load_settings
     from data.collector import PolymarketCollector
     from data.odds_api import OddsApiClient
-    from analysis.backtest import resolve_pending_snapshots
+    from check_results import resolve_bets
     from storage.db import Database
     from trading.risk import RiskManager
     from trading.executor import Executor
@@ -53,10 +53,8 @@ async def main():
             settings, collector, odds_client, executor,
             args.bankroll, "recommend", db=db,
         )
-        # Resolve pending snapshots from closed markets
-        n = await resolve_pending_snapshots(db, collector)
-        if n > 0:
-            console.print(f"[dim]Resolved {n} snapshot(s)[/dim]")
+        # Resolve pending snapshots and bets from closed markets (reuse collector)
+        await resolve_bets(db, collector=collector)
     finally:
         await collector.close()
         await odds_client.close()

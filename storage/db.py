@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, date
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -144,7 +144,7 @@ class Database:
         return [dict(zip(cols, row)) for row in rows]
 
     async def get_todays_bets(self) -> List[dict]:
-        today = date.today().isoformat()
+        today = self._today_utc_prefix()
         cursor = await self._db.execute(
             "SELECT * FROM bets WHERE created_at LIKE ?", (f"{today}%",)
         )
@@ -152,28 +152,36 @@ class Database:
         cols = [d[0] for d in cursor.description]
         return [dict(zip(cols, row)) for row in rows]
 
+    def _today_utc_prefix(self) -> str:
+        """Префикс даты для LIKE по created_at (ISO UTC в БД)."""
+        return datetime.now(timezone.utc).date().isoformat()
+
     async def get_todays_pnl(self) -> float:
-        today = date.today().isoformat()
+        """Сумма P&L за календарные сутки UTC только по реальным ставкам (mode=auto)."""
+        today = self._today_utc_prefix()
         cursor = await self._db.execute(
-            "SELECT COALESCE(SUM(pnl), 0) FROM bets WHERE resolved=1 AND created_at LIKE ?",
+            """SELECT COALESCE(SUM(pnl), 0) FROM bets
+               WHERE resolved=1 AND LOWER(mode) = 'auto' AND created_at LIKE ?""",
             (f"{today}%",),
         )
         row = await cursor.fetchone()
         return float(row[0]) if row else 0.0
 
     async def get_todays_wagered(self) -> float:
-        today = date.today().isoformat()
+        """Оборот за сутки UTC только auto — recommend не тратит лимит дневного оборота."""
+        today = self._today_utc_prefix()
         cursor = await self._db.execute(
-            "SELECT COALESCE(SUM(size_usd), 0) FROM bets WHERE created_at LIKE ?",
+            """SELECT COALESCE(SUM(size_usd), 0) FROM bets
+               WHERE LOWER(mode) = 'auto' AND created_at LIKE ?""",
             (f"{today}%",),
         )
         row = await cursor.fetchone()
         return float(row[0]) if row else 0.0
 
     async def get_consecutive_losses(self) -> int:
-        """Число подряд идущих проигрышей (от последней ставки назад)."""
+        """Подряд реальных проигрышей (auto, pnl < 0), от новых к старым."""
         cursor = await self._db.execute(
-            """SELECT pnl FROM bets WHERE resolved=1
+            """SELECT pnl FROM bets WHERE resolved=1 AND LOWER(mode) = 'auto'
                ORDER BY created_at DESC LIMIT 20"""
         )
         rows = await cursor.fetchall()
@@ -182,7 +190,7 @@ class Database:
             pnl = row[0]
             if pnl is None:
                 continue
-            if pnl <= 0:
+            if pnl < 0:
                 count += 1
             else:
                 break
@@ -321,9 +329,10 @@ class Database:
         return initial_bankroll + pnl
 
     async def get_peak_equity_and_drawdown(self, initial_bankroll: float) -> tuple[float, float]:
-        """(peak_equity, current_drawdown_pct). Drawdown = (peak - current) / peak * 100."""
+        """(peak_equity, current_drawdown_pct). Только auto-ставки — бумажные recommend не влияют."""
         cursor = await self._db.execute(
-            "SELECT created_at, pnl FROM bets WHERE resolved=1 ORDER BY created_at ASC"
+            """SELECT created_at, pnl FROM bets
+               WHERE resolved=1 AND LOWER(mode) = 'auto' ORDER BY created_at ASC"""
         )
         rows = await cursor.fetchall()
         equity = initial_bankroll

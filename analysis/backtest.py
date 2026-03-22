@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
 
 from rich.console import Console
 from rich.table import Table
 
-from core.bet_results import calc_pnl, snapshot_entry_price
 from storage.db import Database
 
 logger = logging.getLogger(__name__)
@@ -222,70 +220,3 @@ async def show_stats_by_league(db: Database):
             f"${pnl:.2f}",
         )
     console.print(table)
-
-
-async def resolve_pending_snapshots(
-    db: Database,
-    collector,
-    limit_per_batch: int = 100,
-) -> int:
-    """
-    Resolve pending snapshots: fetch closed markets from Gamma, match to snapshots,
-    compute virtual P&L, update db. Returns number of newly resolved snapshots.
-    """
-    unresolved = await db.get_unresolved_snapshots()
-    if not unresolved:
-        return 0
-
-    resolved_markets: List[dict] = []
-    offset = 0
-    while True:
-        batch = await collector.fetch_resolved_markets(limit=limit_per_batch, offset=offset)
-        if not batch:
-            break
-        for m in batch:
-            resolved_markets.append({
-                "condition_id": m.condition_id,
-                "question": (m.question or "").strip().lower(),
-                "outcome": (m.outcome or "").strip(),
-            })
-        if len(batch) < limit_per_batch:
-            break
-        offset += limit_per_batch
-
-    if not resolved_markets:
-        return 0
-
-    resolved_ids = {m["condition_id"] for m in resolved_markets}
-    by_question = {m["question"][:80]: m for m in resolved_markets if m["question"]}
-
-    count = 0
-    for snap in unresolved:
-        sid = snap.get("id")
-        cid = snap.get("market_condition_id", "")
-        q = (snap.get("market_question") or "").strip().lower()[:80]
-        side = snap.get("side", "YES")
-        bet_usd = float(snap.get("recommended_bet_usd") or 0)
-
-        match: Optional[dict] = None
-        if cid and cid in resolved_ids:
-            match = next((m for m in resolved_markets if m["condition_id"] == cid), None)
-        if not match and q and q in by_question:
-            match = by_question.get(q)
-
-        if not match:
-            continue
-
-        outcome = match.get("outcome", "").upper()
-        won = (
-            (outcome == "YES" and side == "YES")
-            or (outcome == "NO" and side == "NO")
-        )
-        entry = snapshot_entry_price(snap)
-        virtual_pnl = calc_pnl(bet_usd, entry, won) if entry > 0 else (-bet_usd if not won else 0)
-
-        await db.resolve_snapshot(sid, won, virtual_pnl)
-        count += 1
-        logger.info("Resolved snapshot %d: %s %s -> %s P&L=%.2f", sid, q[:40], side, "WIN" if won else "LOSS", virtual_pnl)
-
-    return count

@@ -17,7 +17,7 @@ from data.models import (
 from data.odds_api import _normalize, _team_in_question, match_odds_to_markets
 from analysis.kelly import kelly_yes, kelly_no, compute_kelly
 from analysis.signals import generate_signals, _find_true_prob
-from analysis.backtest import resolve_pending_snapshots
+from check_results import resolve_bets
 from storage.db import Database
 from trading.risk import RiskManager
 from trading.executor import Executor
@@ -261,8 +261,8 @@ async def _test_db_insert_and_query():
         size_usd=25.0,
         edge=0.10,
         kelly_fraction=0.22,
-        mode="recommend",
-        status="recommended",
+        mode="auto",
+        status="filled",
     )
     bet_id = await db.insert_bet(bet)
     assert bet_id > 0
@@ -275,6 +275,22 @@ async def _test_db_insert_and_query():
     wagered = await db.get_todays_wagered()
     assert wagered == 25.0
 
+    # Режим recommend не увеличивает дневной оборот для RiskManager
+    await db.insert_bet(
+        BetRecord(
+            market_condition_id="0xREC",
+            market_question="Paper only?",
+            side=Side.YES,
+            price=0.5,
+            size_usd=100.0,
+            edge=0.05,
+            kelly_fraction=0.1,
+            mode="recommend",
+            status="recommended",
+        )
+    )
+    assert await db.get_todays_wagered() == 25.0
+
     pnl = await db.get_todays_pnl()
     assert pnl == 0.0  # no resolved bets
 
@@ -283,7 +299,7 @@ async def _test_db_insert_and_query():
     assert pnl == 12.50
 
     stats = await db.get_overall_stats()
-    assert stats["total"] == 1
+    assert stats["total"] == 2
     assert stats["wins"] == 1
 
     await db.close()
@@ -546,8 +562,7 @@ async def _test_resolve_snapshots():
             )
             return [m] if offset == 0 else []
 
-    n = await resolve_pending_snapshots(db, MockCollector())
-    assert n == 1
+    await resolve_bets(db, collector=MockCollector())
 
     snaps = await db.get_resolved_snapshots_for_calibration()
     assert len(snaps) == 1
@@ -593,7 +608,7 @@ async def _test_db_equity_drawdown():
     now = datetime.now(timezone.utc)
     await db.insert_bet(BetRecord(
         market_condition_id="0x1", market_question="Q1", side=Side.YES,
-        price=0.5, size_usd=20, edge=0.05, kelly_fraction=0.1, mode="recommend",
+        price=0.5, size_usd=20, edge=0.05, kelly_fraction=0.1, mode="auto",
         status="resolved", pnl=10.0, resolved=True, created_at=now, resolved_at=now,
     ))
 
@@ -606,7 +621,7 @@ async def _test_db_equity_drawdown():
 
     await db.insert_bet(BetRecord(
         market_condition_id="0x2", market_question="Q2", side=Side.YES,
-        price=0.5, size_usd=20, edge=0.05, kelly_fraction=0.1, mode="recommend",
+        price=0.5, size_usd=20, edge=0.05, kelly_fraction=0.1, mode="auto",
         status="resolved", pnl=-30.0, resolved=True, created_at=now, resolved_at=now,
     ))
 

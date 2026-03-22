@@ -88,9 +88,10 @@ class RiskManager:
                 reason=f"Bet size too small after caps: ${size:.2f}",
             )
 
-        # 4. Remaining daily budget
+        # 4. Remaining daily budget (только реальный оборот auto; см. db.get_todays_wagered)
         todays_wagered = await self.db.get_todays_wagered()
-        remaining_budget = max(0, bankroll * 0.3 - todays_wagered)  # max 30% of bankroll/day
+        max_day_pct = float(getattr(s, "max_daily_wager_pct", 0.30) or 0.30)
+        remaining_budget = max(0, bankroll * max_day_pct - todays_wagered)
         if remaining_budget < size:
             if remaining_budget >= 1.0:
                 size = remaining_budget

@@ -89,11 +89,11 @@ Python-агент для value betting на Polymarket:
 
 ---
 
-## 4. Текущая статистика (на момент последнего refresh — 16.03.2026)
+## 4. Текущая статистика (на момент последнего refresh — 22.03.2026)
 
-- Закрытых: 8
+- Закрытых: 9
 - Побед: 2 (Tijuana, Auxerre)
-- Проигрышей: 6 (Aston Villa, Tolima, Puebla/Tigres, Middlesbrough, Kartal 22.5, Kartal 23.5 и др.)
-- WR: 25.0%
-- P&L: +$21.82
-- Активных: 11 (Carolina Hurricanes, World Cup, NBA Finals, NHL, LY vs LOUD и др.)
+- Проигрышей: 7 (Aston Villa, Tolima, Puebla/Tigres, Middlesbrough, Kartal 22.5, Kartal 23.5, LY vs LOUD и др.)
+- WR: 22.2%
+- P&L: +$7.22
+- Активных: 10 (Carolina Hurricanes, World Cup, NBA Finals, NHL и др.)
