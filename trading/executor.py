@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from decimal import ROUND_DOWN, Decimal
 from typing import List, Optional
 
 from config import Settings
@@ -11,9 +12,33 @@ from data.collector import PolymarketCollector
 from data.models import BetRecord, Side, Signal, SnapshotRecord
 from storage.db import Database
 from trading.risk import RiskManager
+from trading.clob_setup import authenticated_clob_client
 from backtest.simulator import sim_fill_orderbook
 
 logger = logging.getLogger(__name__)
+
+
+def _invalid_signature_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "invalid signature" in msg or ("400" in str(exc) and "signature" in msg)
+
+
+def _signature_types_to_try(settings: Settings) -> list[int]:
+    primary = int(getattr(settings, "polymarket_signature_type", 0) or 0)
+    alt = 1 - primary if primary in (0, 1) else 0
+    out: list[int] = [primary]
+    if alt not in out:
+        out.append(alt)
+    return out
+
+
+def _snap_price_to_tick(price: float, tick: float) -> float:
+    """Цена лимита на сетке tick (требование CLOB / price_valid)."""
+    if tick <= 0 or price <= 0:
+        return round(price, 2)
+    steps = int(Decimal(str(price)) / Decimal(str(tick)))
+    out = Decimal(steps) * Decimal(str(tick))
+    return float(out.quantize(Decimal("0.0001")))
 
 
 class Executor:
@@ -33,34 +58,18 @@ class Executor:
         self._clob_client = None
 
     def _in_betting_window(self, signal) -> bool:
-        """Проверка: матч в окне 2-8 часов до начала (настраивается в config)."""
-        market = signal.market
-        if not market.end_date:
-            return True
-        now = datetime.now(timezone.utc)
-        end = market.end_date
-        if end.tzinfo is None:
-            end = end.replace(tzinfo=timezone.utc)
-        hours = (end - now).total_seconds() / 3600
-        min_h = getattr(self.settings, "betting_window_hours_min", 2.0)
-        max_h = getattr(self.settings, "betting_window_hours_max", 8.0)
-        if hours < 0:
-            return False  # уже закончился
-        return min_h <= hours <= max_h
+        return signal_in_betting_window(signal, self.settings)
 
-    def _get_trading_client(self):
+    def _get_trading_client(self, signature_type: int | None = None):
         """Initialize authenticated CLOB client for auto mode."""
+        if signature_type is not None:
+            client = authenticated_clob_client(self.settings, signature_type=signature_type)
+            creds = client.create_or_derive_api_key()
+            client.set_api_creds(creds)
+            return client
         if self._clob_client is None:
-            from py_clob_client.client import ClobClient
-
-            client = ClobClient(
-                self.settings.clob_api_url,
-                key=self.settings.polymarket_private_key,
-                chain_id=self.settings.chain_id,
-                signature_type=0,
-                funder=self.settings.polymarket_funder_address,
-            )
-            creds = client.create_or_derive_api_creds()
+            client = authenticated_clob_client(self.settings)
+            creds = client.create_or_derive_api_key()
             client.set_api_creds(creds)
             self._clob_client = client
         return self._clob_client
@@ -130,7 +139,13 @@ class Executor:
         return round(candidate, 2)
 
     async def _place_order(self, signal: Signal) -> BetRecord:
-        """Place a FOK order via py-clob-client."""
+        """Place a FOK order via py-clob-client.
+
+        Типичные сбои (см. order_id в bets / лог):
+        - 403 / geoblock: регион трафика; VPN до запуска процесса, см. Polymarket CLOB geoblock.
+        - 400: неверная подпись, POLYMARKET_SIGNATURE_TYPE (0 EOA vs 1 proxy), funder ≠ аккаунт.
+        - cancelled/slippage: цена ушла дальше MAX_SLIPPAGE между сигналом и post_order.
+        """
         market = signal.market
         token_id = (
             market.yes_token_id if signal.side == Side.YES else market.no_token_id
@@ -149,64 +164,88 @@ class Executor:
         if not ok:
             return self._create_record(signal, status="cancelled", order_id="slippage")
 
-        try:
-            client = self._get_trading_client()
-            from py_clob_client.clob_types import OrderArgs, OrderType
-            from py_clob_client.order_builder.constants import BUY
+        from py_clob_client_v2 import OrderArgs, OrderType, PartialCreateOrderOptions
+        from py_clob_client_v2.order_builder.constants import BUY
 
-            size = signal.bet_size_usd / signal.market_price if signal.market_price > 0 else 0
-            size = round(size, 2)
+        cp = float(current_price)
+        use_maker = bool(getattr(self.settings, "use_maker_first", False))
+        last_exc: Exception | None = None
+        primary_sig = int(getattr(self.settings, "polymarket_signature_type", 0) or 0)
 
-            neg_risk = False
-            use_maker = bool(getattr(self.settings, "use_maker_first", False))
-            if use_maker:
-                limit_price = await self._maker_limit_price(token_id, signal.market_price)
-                order_type = OrderType.GTC
-                post_only = True
-            else:
-                limit_price = round(signal.market_price, 2)
-                order_type = OrderType.FOK
-                post_only = False
+        for sig_type in _signature_types_to_try(self.settings):
+            try:
+                if sig_type == primary_sig:
+                    client = self._get_trading_client()
+                else:
+                    client = self._get_trading_client(signature_type=sig_type)
 
-            options = {"tick_size": "0.01", "neg_risk": neg_risk}
+                tick = float(client.get_tick_size(token_id))
+                if use_maker:
+                    raw_lp = await self._maker_limit_price(token_id, cp)
+                    limit_price = _snap_price_to_tick(raw_lp, tick)
+                    order_type = OrderType.GTC
+                    post_only = True
+                else:
+                    limit_price = _snap_price_to_tick(cp, tick)
+                    order_type = OrderType.FOK
+                    post_only = False
 
-            def _create_and_post():
-                signed = client.create_order(
-                    OrderArgs(
-                        token_id=token_id,
-                        price=limit_price,
-                        size=size,
-                        side=BUY,
-                    ),
-                    options,
+                if limit_price <= 0:
+                    return self._create_record(signal, status="cancelled", order_id="bad_price")
+                raw_shares = Decimal(str(signal.bet_size_usd)) / Decimal(str(limit_price))
+                size = float(raw_shares.quantize(Decimal("0.0001"), rounding=ROUND_DOWN))
+                if size <= 0:
+                    return self._create_record(signal, status="cancelled", order_id="zero_size")
+
+                options = PartialCreateOrderOptions(tick_size=None, neg_risk=None)
+
+                def _create_and_post(clob=client):
+                    signed = clob.create_order(
+                        OrderArgs(
+                            token_id=token_id,
+                            price=limit_price,
+                            size=size,
+                            side=BUY,
+                        ),
+                        options,
+                    )
+                    return clob.post_order(signed, order_type, post_only)
+
+                response = await asyncio.to_thread(_create_and_post)
+
+                order_id = response.get("orderID", "")
+                if use_maker:
+                    status = "pending"
+                else:
+                    status = "filled" if response.get("status") == "matched" else "pending"
+                logger.info(
+                    "Order placed: %s %s $%.2f @ %.4f (limit) type=%s sig=%s — %s",
+                    signal.side.value,
+                    market.question[:40],
+                    signal.bet_size_usd,
+                    limit_price,
+                    getattr(order_type, "value", str(order_type)),
+                    sig_type,
+                    status,
                 )
-                return client.post_order(
-                    signed,
-                    orderType=order_type,
-                    post_only=post_only,
-                )
+                return self._create_record(signal, status=status, order_id=order_id)
 
-            response = await asyncio.to_thread(_create_and_post)
+            except Exception as exc:
+                last_exc = exc
+                if _invalid_signature_error(exc):
+                    logger.warning(
+                        "CLOB invalid signature (type=%s), retry if alternate available: %s",
+                        sig_type,
+                        exc,
+                    )
+                    continue
+                logger.error("Order failed for %s: %s", market.question[:40], exc)
+                return self._create_record(signal, status="rejected", order_id=str(exc)[:100])
 
-            order_id = response.get("orderID", "")
-            if use_maker:
-                status = "pending"  # лимит в стакане; проверять fill отдельно
-            else:
-                status = "filled" if response.get("status") == "matched" else "pending"
-            logger.info(
-                "Order placed: %s %s $%.2f @ %.4f (limit) type=%s — %s",
-                signal.side.value,
-                market.question[:40],
-                signal.bet_size_usd,
-                limit_price,
-                getattr(order_type, "value", str(order_type)),
-                status,
-            )
-            return self._create_record(signal, status=status, order_id=order_id)
-
-        except Exception as exc:
-            logger.error("Order failed for %s: %s", market.question[:40], exc)
-            return self._create_record(signal, status="rejected", order_id=str(exc)[:100])
+        if last_exc is not None:
+            logger.error("Order failed for %s: %s", market.question[:40], last_exc)
+            return self._create_record(signal, status="rejected", order_id=str(last_exc)[:100])
+        return self._create_record(signal, status="rejected", order_id="order_failed")
 
     def _create_recommendation(self, signal: Signal) -> BetRecord:
         """Create a BetRecord in recommend mode (no actual order)."""
@@ -265,3 +304,20 @@ class Executor:
             slippage_bps=slippage_bps,
         )
         await self.db.insert_snapshot(snap)
+
+
+def signal_in_betting_window(signal, settings: Settings) -> bool:
+    """Матч в окне betting_window_hours_min–max часов до начала (config / .env)."""
+    market = signal.market
+    if not market.end_date:
+        return True
+    now = datetime.now(timezone.utc)
+    end = market.end_date
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    hours = (end - now).total_seconds() / 3600
+    min_h = getattr(settings, "betting_window_hours_min", 2.0)
+    max_h = getattr(settings, "betting_window_hours_max", 24.0)
+    if hours < 0:
+        return False
+    return min_h <= hours <= max_h

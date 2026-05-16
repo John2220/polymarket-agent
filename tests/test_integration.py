@@ -6,6 +6,7 @@ import sys
 import tempfile
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -193,6 +194,34 @@ def test_generate_signals_no_filter_when_yes_high():
     matched = [(line, mkt, "Home")]
     signals = generate_signals(matched, bankroll=1000, settings=settings)
     assert len(signals) == 0  # filtered by no_bet_max_yes
+
+
+def test_generate_signals_applies_calibration_override():
+    settings = _settings(
+        min_edge=0.02,
+        min_liquidity=500,
+        kelly_multiplier=0.5,
+        max_bet_pct=1.0,
+        max_bet_usd=1000.0,
+    )
+    settings.kelly_calibration_enabled = True
+    settings.calibration_kelly_multiplier = 1.0
+
+    line = _odds_line(home_price=1.60, away_price=2.50)
+    line.devig()
+    mkt = _market(question="Will Lakers win?", yes_price=0.45, liquidity=5000)
+    matched = [(line, mkt, "Lakers")]
+
+    base = generate_signals(matched, bankroll=1000, settings=settings)
+    calibrated = generate_signals(
+        matched,
+        bankroll=1000,
+        settings=settings,
+        calibration_multiplier_override=0.5,
+    )
+    assert len(base) == 1
+    assert len(calibrated) == 1
+    assert calibrated[0].bet_size_usd < base[0].bet_size_usd
 
 
 # ═══════════════════════════════════════════════════════
@@ -528,6 +557,126 @@ async def _test_executor_recommend_mode():
 
 def test_executor_recommend_mode():
     asyncio.run(_test_executor_recommend_mode())
+
+
+async def _test_executor_auto_risk_blocks_before_place():
+    """Auto mode: RiskManager отклоняет сигнал до вызова _place_order."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        db = Database(path=Path(tmp.name))
+    await db.connect()
+    settings = _settings(max_bet_usd=50.0)
+    risk = RiskManager(settings, db)
+
+    class MockCollector:
+        async def fetch_price(self, token_id):
+            return 0.55
+
+        async def fetch_orderbook(self, token_id):
+            return OrderBook(bids=[], asks=[])
+
+        async def close(self):
+            pass
+
+    executor = Executor(settings, db, risk, MockCollector(), mode="auto")
+    market = _market(question="Lakers vs Celtics", yes_price=0.50, liquidity=5000)
+    market.end_date = datetime.now(timezone.utc) + timedelta(hours=4)
+    signal = Signal(
+        market=market,
+        side=Side.YES,
+        market_price=0.50,
+        true_prob=0.60,
+        edge=0.10,
+        kelly_fraction=0.20,
+        bet_size_usd=25.0,
+    )
+
+    with patch.object(executor, "_place_order", new_callable=AsyncMock) as mock_place:
+        records = await executor.execute_signals([signal], bankroll=50.0)
+        mock_place.assert_not_called()
+
+    assert records == []
+
+    await db.close()
+    Path(tmp.name).unlink(missing_ok=True)
+
+
+def test_executor_auto_risk_blocks_before_place():
+    asyncio.run(_test_executor_auto_risk_blocks_before_place())
+
+
+async def _test_executor_auto_slippage_skips_place():
+    """Auto mode: проскальзывание > MAX_SLIPPAGE отменяет ордер без post_order."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        db = Database(path=Path(tmp.name))
+    await db.connect()
+    settings = _settings(max_slippage=0.02)
+    risk = RiskManager(settings, db)
+
+    class MockCollector:
+        async def fetch_price(self, token_id):
+            return 0.62  # ~12.7% slip от 0.55
+
+        async def fetch_orderbook(self, token_id):
+            return OrderBook(bids=[], asks=[])
+
+        async def close(self):
+            pass
+
+    executor = Executor(settings, db, risk, MockCollector(), mode="auto")
+    market = _market(question="Lakers vs Celtics", yes_price=0.55, liquidity=5000)
+    market.end_date = datetime.now(timezone.utc) + timedelta(hours=4)
+    signal = Signal(
+        market=market,
+        side=Side.YES,
+        market_price=0.55,
+        true_prob=0.65,
+        edge=0.10,
+        kelly_fraction=0.20,
+        bet_size_usd=20.0,
+    )
+
+    with patch.object(executor, "_get_trading_client") as mock_client:
+        records = await executor.execute_signals([signal], bankroll=1000.0)
+        mock_client.assert_not_called()
+
+    assert len(records) == 1
+    assert records[0].status == "cancelled"
+    assert records[0].order_id == "slippage"
+
+    await db.close()
+    Path(tmp.name).unlink(missing_ok=True)
+
+
+def test_executor_auto_slippage_skips_place():
+    asyncio.run(_test_executor_auto_slippage_skips_place())
+
+
+async def _test_risk_min_bankroll_explicit():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        db = Database(path=Path(tmp.name))
+    await db.connect()
+    settings = _settings(max_bet_usd=12.0, min_bankroll=100.0)
+    risk = RiskManager(settings, db)
+    signal = Signal(
+        market=_market(),
+        side=Side.YES,
+        market_price=0.55,
+        true_prob=0.65,
+        edge=0.10,
+        kelly_fraction=0.22,
+        bet_size_usd=12.0,
+    )
+    verdict = await risk.check(signal, bankroll=80.0)
+    assert not verdict.approved
+    assert "Bankroll too low" in verdict.reason
+    assert "100" in verdict.reason
+
+    await db.close()
+    Path(tmp.name).unlink(missing_ok=True)
+
+
+def test_risk_min_bankroll_explicit():
+    asyncio.run(_test_risk_min_bankroll_explicit())
 
 
 async def _test_resolve_snapshots():

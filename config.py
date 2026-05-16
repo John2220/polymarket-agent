@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     # Polymarket (необязательно для режима рекомендаций)
     polymarket_private_key: str = ""
     polymarket_funder_address: str = ""
+    # CLOB: 0 = EOA (MetaMask и т.д.), 1 = Polymarket proxy (часто email-логин) — см. py_order_utils
+    polymarket_signature_type: int = 0
 
     # Котировки букмекеров
     odds_api_key: str = ""
@@ -66,14 +68,17 @@ class Settings(BaseSettings):
     betting_window_hours_max: float = 24.0  # Не ставить за >24ч (смена состава)
 
     # Лимиты
+    min_bet_usd: float = 18.0  # Минимальный размер ставки после всех кэпов (risk + исполнение)
     max_bet_pct: float = 0.05
-    max_bet_usd: float = 50.0
+    max_bet_usd: float = 18.0  # Держим равным min_bet_usd для фиксированной ставки в авто-режиме
     max_slippage: float = 0.02
-    daily_loss_limit: float = 50.0  # 5% от $1000 — активирован по плану доработок
+    daily_loss_limit: float = 12.0
     max_daily_wager_pct: float = 0.30  # Макс. доля банкролла в обороте за сутки (только auto)
     max_consecutive_losses: int = 3  # После 3 проигрышей подряд — пауза 24ч
     max_drawdown_pct: float = 25.0  # Пауза ставок при просадке от пика (BACKTEST 2025)
     drawdown_alert_pct: float = 15.0  # Алерт в лог при просадке
+    # 0 = использовать max_bet_usd * 2 (как раньше); иначе явный пол банкролла для auto/real
+    min_bankroll: float = 0.0
 
     # Лиги: Tier1 = полный Kelly, Tier2 = Kelly×0.10 (см. league_detector)
 
@@ -84,8 +89,20 @@ class Settings(BaseSettings):
     # Анализ формы команды (fix-team-form-analysis). Нужен FOOTBALL_DATA_API_KEY в .env
     use_team_form_filter: bool = True  # False = отключить фильтр формы
 
+    # Калибровка Kelly (сегмент 2): после forward-test задайте CALIBRATION_KELLY_MULT < 1 при завышении edge
+    kelly_calibration_enabled: bool = False
+    calibration_kelly_multiplier: float = 1.0
+    calibration_min_samples: int = 40
+    calibration_full_confidence_samples: int = 200
+    calibration_min_multiplier: float = 0.5
+    calibration_max_multiplier: float = 1.4
+
+    # Алерты: POST JSON на URL при жёстких стопах риска (drawdown / дневной лимит)
+    alert_webhook_url: str = ""
+
     # Инфраструктура
     poll_interval: int = 60
+    collector_latency_warn_ms: int = 6000
 
     # Исполнение (task-maker-first): GTC + post_only, цена best_bid + N тиков (не пересекает ask)
     use_maker_first: bool = False
