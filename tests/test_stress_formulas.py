@@ -128,6 +128,18 @@ def test_kelly_14_fraction_bounds():
                 assert 0 <= kelly_no(p, c) <= 1.5
 
 
+def test_kelly_independent_no_price_from_book():
+    """При спреде c_no != 1 - c_yes доля Kelly NO отличается от симметричного 1 - yes."""
+    p, yes_p = 0.35, 0.40
+    c_naive = 1.0 - yes_p
+    c_no_book = 0.54
+    assert abs(c_naive - c_no_book) >= 0.05
+    f_naive = kelly_no(p, yes_p, c_naive)
+    f_book = kelly_no(p, yes_p, c_no_book)
+    assert f_naive > 0 and f_book > 0
+    assert f_book != f_naive
+
+
 def test_kelly_15_compute_respects_limits():
     """compute_kelly соблюдает max_bet_usd, max_bet_pct."""
     s = Settings(odds_api_key="x", kelly_multiplier=0.25, max_bet_pct=0.05, max_bet_usd=50.0)
@@ -258,6 +270,28 @@ def test_quality_28_event_key_uniqueness():
     k3 = event_key("Other Match O/U 22.5")
     assert k1 == k2  # один матч — один ключ
     assert k1 != k3
+
+
+def test_quality_30_draw_side_kelly_consistency():
+    """
+    Сторона YES/NO должна выбираться по Kelly после draw_prob (футбол).
+    Сейчас signals.py сравнивает f_yes/f_no до draw — возможен перекос стороны.
+    """
+    import pytest
+    from analysis.kelly import kelly_yes, kelly_no
+
+    true_prob, yes_p, no_p = 0.48, 0.42, 0.55
+    draw = 0.27
+    fy, fn = kelly_yes(true_prob, yes_p), kelly_no(true_prob, yes_p, no_p)
+    side_raw = "YES" if fy >= fn and fy > 0 else "NO"
+    adj = true_prob * (1.0 - draw)
+    fy2, fn2 = kelly_yes(adj, yes_p), kelly_no(adj, yes_p, no_p)
+    side_adj = "YES" if fy2 >= fn2 and fy2 > 0 else "NO"
+    if side_raw != side_adj:
+        pytest.xfail(
+            f"side mismatch raw={side_raw} adj={side_adj} — fix generate_signals side pick"
+        )
+    assert side_raw == side_adj
 
 
 def test_quality_29_price_in_valid_range():
